@@ -1,0 +1,189 @@
+# Traversing a graph, and the questions traversal answers.
+#
+# Neighbours arrive sorted (see build.ecko), so every order below is stable:
+# the same graph gives the same walk every run, which is what makes these
+# testable and their output diffable.
+
+import "./build.ecko"
+
+## Breadth-first order from `start`, including `start` itself.
+##
+## Layer by layer, so the order doubles as "how far away is each node" - which
+## is why `path` is built on this rather than on `dfs`.
+export fn bfs(g, start) {
+    unless build.has_node(g, start) { build.fail("no such node '{start}'") }
+    mut seen = [start]
+    mut queue = [start]
+    mut out = []
+    while len(queue) > 0 {
+        node = first(queue)
+        queue = drop(queue, 1)
+        out = push(out, node)
+        for n in build.neighbors(g, node) {
+            unless contains(seen, n) {
+                seen = push(seen, n)
+                queue = push(queue, n)
+            }
+        }
+    }
+    out
+}
+
+## Depth-first order from `start`, including `start` itself.
+##
+## Iterative rather than recursive: a long chain would otherwise hit the
+## recursion cap, and a graph big enough to matter is exactly the one that has
+## long chains.
+export fn dfs(g, start) {
+    unless build.has_node(g, start) { build.fail("no such node '{start}'") }
+    mut stack = [start]
+    mut seen = []
+    mut out = []
+    while len(stack) > 0 {
+        node = last(stack)
+        stack = take(stack, len(stack) - 1)
+        unless contains(seen, node) {
+            seen = push(seen, node)
+            out = push(out, node)
+            # Pushed in reverse so the first neighbour is popped first, which
+            # makes the walk match the sorted order rather than reverse it.
+            for n in reverse(build.neighbors(g, node)) {
+                unless contains(seen, n) { stack = push(stack, n) }
+            }
+        }
+    }
+    out
+}
+
+## Every node reachable from `start`, sorted, excluding `start` itself.
+##
+## The card's question: who can approve this spend, directly or by delegation?
+export fn reachable(g, start) {
+    sort(filter(bfs(g, start), fn(n) n != start))
+}
+
+## Can `src` reach `dst`? A node always reaches itself.
+export fn connected(g, src, dst) {
+    if src == dst { return build.has_node(g, src) }
+    contains(bfs(g, src), dst)
+}
+
+## The fewest-hops path from `src` to `dst`, or null if there is none.
+##
+## Breadth-first, so the first time `dst` is seen is by a shortest route. Every
+## edge counts as one hop: weights are a different package (`graph_algo`).
+export fn path(g, src, dst) {
+    unless build.has_node(g, src) { build.fail("no such node '{src}'") }
+    unless build.has_node(g, dst) { build.fail("no such node '{dst}'") }
+    if src == dst { return [src] }
+    mut came_from = {}
+    mut seen = [src]
+    mut queue = [src]
+    while len(queue) > 0 {
+        node = first(queue)
+        queue = drop(queue, 1)
+        for n in build.neighbors(g, node) {
+            unless contains(seen, n) {
+                seen = push(seen, n)
+                came_from = insert(came_from, n, node)
+                if n == dst { return trace(came_from, src, dst) }
+                queue = push(queue, n)
+            }
+        }
+    }
+    null
+}
+
+# Walk the came-from links backwards, then reverse.
+fn trace(came_from, src, dst) {
+    mut out = [dst]
+    mut current = dst
+    while current != src {
+        current = get(came_from, current)
+        out = push(out, current)
+    }
+    reverse(out)
+}
+
+## The number of hops on the shortest path, or null if unreachable.
+export fn distance(g, src, dst) {
+    p = path(g, src, dst)
+    if is_null(p) { null } else { len(p) - 1 }
+}
+
+## Connected components, each sorted, the list sorted by first member.
+##
+## Meaningful on an undirected graph. On a directed one this follows edges
+## forwards only, so it reports what is reachable rather than true weak
+## components.
+export fn components(g) {
+    mut out = []
+    mut placed = []
+    for n in build.nodes(g) {
+        unless contains(placed, n) {
+            group = sort(bfs(g, n))
+            # A later node may already sit in an earlier group.
+            unless contains(placed, first(group)) {
+                out = push(out, group)
+                for m in group {
+                    placed = push(placed, m)
+                }
+            }
+        }
+    }
+    out
+}
+
+## Does the graph contain a directed cycle?
+##
+## Depth-first with three colours: unvisited, on the current path, and finished.
+## An edge back to something on the current path is a cycle; an edge to
+## something merely finished is a diamond, which is not.
+export fn has_cycle(g) {
+    mut finished = []
+    for start in build.nodes(g) {
+        unless contains(finished, start) {
+            found = cycle_from(g, start, [], finished)
+            if found.cycle { return true }
+            finished = found.finished
+        }
+    }
+    false
+}
+
+# Recursive helper for `has_cycle`. Returns `{ cycle, finished }`.
+fn cycle_from(g, node, on_path, finished) {
+    if contains(on_path, node) { return { cycle: true, finished: finished } }
+    if contains(finished, node) { return { cycle: false, finished: finished } }
+    mut done = finished
+    path_now = push(on_path, node)
+    for n in build.neighbors(g, node) {
+        found = cycle_from(g, n, path_now, done)
+        if found.cycle { return { cycle: true, finished: found.finished } }
+        done = found.finished
+    }
+    { cycle: false, finished: push(done, node) }
+}
+
+## Nodes ordered so every edge points forwards. Raises on a cyclic graph rather
+## than returning an order that cannot exist.
+##
+## Kahn's algorithm: repeatedly take a node nothing points at. Ties are broken
+## by sorting, so the result is stable rather than merely valid.
+export fn topo_sort(g) {
+    mut remaining = build.nodes(g)
+    mut out = []
+    while len(remaining) > 0 {
+        ready = sort(filter(remaining, fn(n) incoming_from(g, n, remaining) == 0))
+        if len(ready) == 0 { build.fail("graph has a cycle, so no topological order exists") }
+        node = first(ready)
+        out = push(out, node)
+        remaining = filter(remaining, fn(n) n != node)
+    }
+    out
+}
+
+# How many nodes still in `remaining` point at `node`.
+fn incoming_from(g, node, remaining) {
+    len(filter(remaining, fn(other) other != node and build.has_edge(g, other, node)))
+}

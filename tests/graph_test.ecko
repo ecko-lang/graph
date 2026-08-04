@@ -1,0 +1,201 @@
+# Tests for the graph package - offline, deterministic (no ai/fs/net).
+#
+# Determinism is the thing to watch here. A graph is stored as a map, and Ecko
+# maps are unordered, so anything that returns a list - nodes, neighbours, a
+# traversal order - has to sort or it would differ run to run. Most of these
+# assert on exact order for that reason, not because the order is interesting.
+import std.test
+import "../main.ecko"
+g = main
+
+## The permission graph from the card: who can approve a spend, via delegation.
+fn approvals() {
+    g.from_edges(
+        [
+            ["alice", "bob"],
+            ["alice", "carol"],
+            ["bob", "dave"],
+            ["carol", "dave"],
+            ["dave", "erin"],
+        ],
+    )
+}
+
+# --- building ----------------------------------------------------------------
+
+test.case("an empty graph has nothing in it", fn() {
+    e = g.new()
+    test.eq(g.nodes(e), [])
+    test.eq(g.edges(e), [])
+    test.eq(g.order(e), 0)
+    test.eq(g.size(e), 0)
+})
+
+test.case("adding an edge adds both endpoints", fn() {
+    x = g.new() |> g.add_edge("a", "b")
+    test.eq(g.nodes(x), ["a", "b"])
+    test.eq(g.order(x), 2)
+    test.eq(g.size(x), 1)
+    test.ok(g.has_edge(x, "a", "b"), "a->b")
+    test.ok(g.has_edge(x, "b", "a") == false, "directed by default")
+})
+
+test.case("an undirected graph carries edges both ways", fn() {
+    x = g.new({ directed: false }) |> g.add_edge("a", "b")
+    test.ok(g.has_edge(x, "a", "b"), "a-b")
+    test.ok(g.has_edge(x, "b", "a"), "b-a")
+    # One undirected edge is one edge, not two.
+    test.eq(g.size(x), 1)
+})
+
+test.case("a lone node can exist without edges", fn() {
+    x = g.new() |> g.add_node("island")
+    test.eq(g.nodes(x), ["island"])
+    test.eq(g.neighbors(x, "island"), [])
+    test.eq(g.size(x), 0)
+})
+
+test.case("adding the same edge twice changes nothing", fn() {
+    x = g.new()
+        |> g.add_edge("a", "b")
+        |> g.add_edge("a", "b")
+    test.eq(g.size(x), 1)
+    test.eq(g.neighbors(x, "a"), ["b"])
+})
+
+test.case("removing an edge leaves the nodes; removing a node takes its edges", fn() {
+    x = g.new()
+        |> g.add_edge("a", "b")
+        |> g.add_edge("b", "c")
+    y = g.remove_edge(x, "a", "b")
+    test.eq(g.nodes(y), ["a", "b", "c"])
+    test.ok(g.has_edge(y, "a", "b") == false, "edge gone")
+
+    z = g.remove_node(x, "b")
+    test.eq(g.nodes(z), ["a", "c"])
+    test.eq(g.edges(z), [])
+})
+
+test.case("building never mutates the input", fn() {
+    x = g.new() |> g.add_edge("a", "b")
+    _ = g.add_edge(x, "c", "d")
+    test.eq(g.nodes(x), ["a", "b"])
+})
+
+# --- determinism -------------------------------------------------------------
+
+test.case("nodes, neighbours and edges come back sorted", fn() {
+    # Inserted out of order on purpose: an unsorted map would give a different
+    # answer on a different run, and every traversal below would inherit that.
+    x = g.from_edges([["z", "m"], ["a", "q"], ["a", "b"], ["m", "a"]])
+    test.eq(g.nodes(x), ["a", "b", "m", "q", "z"])
+    test.eq(g.neighbors(x, "a"), ["b", "q"])
+    test.eq(g.edges(x), [["a", "b"], ["a", "q"], ["m", "a"], ["z", "m"]])
+})
+
+test.case("the same graph built in a different order is the same graph", fn() {
+    a = g.from_edges([["x", "y"], ["y", "z"]])
+    b = g.from_edges([["y", "z"], ["x", "y"]])
+    test.eq(g.nodes(a), g.nodes(b))
+    test.eq(g.edges(a), g.edges(b))
+})
+
+# --- traversal ---------------------------------------------------------------
+
+test.case("bfs visits in layers, dfs goes deep first", fn() {
+    x = approvals()
+    test.eq(g.bfs(x, "alice"), ["alice", "bob", "carol", "dave", "erin"])
+    test.eq(g.dfs(x, "alice"), ["alice", "bob", "dave", "erin", "carol"])
+})
+
+test.case("a traversal visits each node once, even with a cycle", fn() {
+    x = g.from_edges([["a", "b"], ["b", "c"], ["c", "a"]])
+    test.eq(g.bfs(x, "a"), ["a", "b", "c"])
+    test.eq(g.dfs(x, "a"), ["a", "b", "c"])
+})
+
+test.case("traversing from an unknown node raises", fn() {
+    caught = try { g.bfs(g.new(), "nope") } catch (e) { get(e, "kind") }
+    test.eq(caught, "graph")
+})
+
+# --- reachability and paths --------------------------------------------------
+
+test.case("reachable answers the card's question", fn() {
+    # Who can approve a spend alice raised, directly or by delegation?
+    x = approvals()
+    test.eq(g.reachable(x, "alice"), ["bob", "carol", "dave", "erin"])
+    test.eq(g.reachable(x, "dave"), ["erin"])
+    test.eq(g.reachable(x, "erin"), [])
+})
+
+test.case("connected says whether one node can reach another", fn() {
+    x = approvals()
+    test.ok(g.connected(x, "alice", "erin"), "alice reaches erin")
+    test.ok(g.connected(x, "erin", "alice") == false, "not the other way")
+    test.ok(g.connected(x, "alice", "alice"), "a node reaches itself")
+})
+
+test.case("path returns the fewest hops, or null", fn() {
+    x = approvals()
+    test.eq(g.path(x, "alice", "erin"), ["alice", "bob", "dave", "erin"])
+    test.eq(g.path(x, "alice", "alice"), ["alice"])
+    test.eq(g.path(x, "erin", "alice"), null)
+})
+
+test.case("path takes the shorter route when there is one", fn() {
+    # a->b->d is two hops; a->c->x->d is three. The longer one is listed first
+    # so a depth-first answer would get this wrong.
+    x = g.from_edges([["a", "c"], ["c", "x"], ["x", "d"], ["a", "b"], ["b", "d"]])
+    test.eq(g.path(x, "a", "d"), ["a", "b", "d"])
+    test.eq(g.distance(x, "a", "d"), 2)
+    test.eq(g.distance(x, "d", "a"), null)
+})
+
+# --- structure ---------------------------------------------------------------
+
+test.case("degree counts edges at a node", fn() {
+    x = approvals()
+    test.eq(g.out_degree(x, "alice"), 2)
+    test.eq(g.in_degree(x, "dave"), 2)
+    test.eq(g.out_degree(x, "erin"), 0)
+})
+
+test.case("components groups an undirected graph", fn() {
+    x = g.new({ directed: false })
+        |> g.add_edge("a", "b")
+        |> g.add_edge("c", "d")
+        |> g.add_node("lonely")
+    test.eq(g.components(x), [["a", "b"], ["c", "d"], ["lonely"]])
+})
+
+test.case("has_cycle finds a loop, and does not invent one", fn() {
+    test.ok(g.has_cycle(g.from_edges([["a", "b"], ["b", "c"], ["c", "a"]])), "triangle")
+    test.ok(g.has_cycle(g.from_edges([["a", "b"], ["b", "c"]])) == false, "chain")
+    test.ok(g.has_cycle(approvals()) == false, "the approval graph is acyclic")
+    # A diamond is not a cycle: two paths meeting is not a loop.
+    test.ok(
+        g.has_cycle(g.from_edges([["a", "b"], ["a", "c"], ["b", "d"], ["c", "d"]])) == false,
+        "diamond",
+    )
+})
+
+test.case("topo_sort orders dependencies before dependants", fn() {
+    x = approvals()
+    order = g.topo_sort(x)
+    test.eq(first(order), "alice")
+    test.eq(last(order), "erin")
+    # Every edge must point forwards in the result.
+    for e in g.edges(x) {
+        test.ok(index_of(order, e[0]) < index_of(order, e[1]), "{e[0]} before {e[1]}")
+    }
+})
+
+test.case("topo_sort refuses a cyclic graph rather than returning nonsense", fn() {
+    caught = try {
+        g.topo_sort(g.from_edges([["a", "b"], ["b", "a"]]))
+    } catch (e) {
+        get(e, "kind")
+    }
+    test.eq(caught, "graph")
+})

@@ -1,0 +1,10 @@
+{
+  "module": "github.com/ecko-lang/graph",
+  "version": "0.10.0",
+  "entrypoint": "main.ecko",
+  "description": "Adjacency-list graphs: build, traverse, and answer reachability and path questions. Pure - no capabilities.",
+  "author": "Sean Nieuwoudt <sean@underwulf.com>",
+  "license": "MIT",
+  "capabilities": [],
+  "dependencies": {}
+}

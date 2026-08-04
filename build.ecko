@@ -1,0 +1,142 @@
+# Building and inspecting a graph.
+#
+# A graph is a plain map: `{ directed, adj }`, where `adj` maps each node to the
+# list of nodes it points at. Every builder returns a new graph rather than
+# mutating, so they compose with `|>`.
+#
+# One rule runs through all of this: **everything that returns a list sorts it**.
+# Ecko maps are unordered, so without sorting, `nodes` would come back in a
+# different order on a different run and every traversal built on it would too.
+
+## The error this package raises.
+export fn fail(message) {
+    error({ kind: "graph", message: message })
+}
+
+## An empty graph. `opts` takes `{ directed: false }` for an undirected one;
+## the default is directed, because the questions this package is for - who can
+## approve this, what depends on what - have a direction.
+export fn new(opts = {}) {
+    directed = if is_null(get(opts, "directed")) { true } else { opts.directed }
+    { directed: directed, adj: {} }
+}
+
+## Build from a list of `[src, dst]` pairs.
+export fn from_edges(pairs, opts = {}) {
+    mut out = new(opts)
+    for p in pairs {
+        out = add_edge(out, p[0], p[1])
+    }
+    out
+}
+
+## Add a node with no edges. Adding one that exists changes nothing.
+export fn add_node(g, node) {
+    if has_node(g, node) { return g }
+    insert(g, "adj", insert(g.adj, node, []))
+}
+
+## Add an edge, adding either endpoint that is missing. In an undirected graph
+## the reverse edge is added too. Adding the same edge twice changes nothing.
+export fn add_edge(g, src, dst) {
+    mut out = add_node(add_node(g, src), dst)
+    out = link(out, src, dst)
+    if out.directed { out } else { link(out, dst, src) }
+}
+
+## Record one direction of an edge.
+export fn link(g, src, dst) {
+    current = get(g.adj, src)
+    if contains(current, dst) { return g }
+    insert(g, "adj", insert(g.adj, src, push(current, dst)))
+}
+
+## Remove an edge, leaving both nodes in place.
+export fn remove_edge(g, src, dst) {
+    mut out = unlink(g, src, dst)
+    if out.directed { out } else { unlink(out, dst, src) }
+}
+
+## Drop one direction of an edge.
+export fn unlink(g, src, dst) {
+    current = get(g.adj, src)
+    if is_null(current) { return g }
+    insert(g, "adj", insert(g.adj, src, filter(current, fn(n) n != dst)))
+}
+
+## Remove a node and every edge touching it.
+export fn remove_node(g, node) {
+    unless has_node(g, node) { return g }
+    mut adj = remove(g.adj, node)
+    for (src, tos) in adj {
+        adj = insert(adj, src, filter(tos, fn(n) n != node))
+    }
+    insert(g, "adj", adj)
+}
+
+## Is this node in the graph?
+export fn has_node(g, node) = is_null(get(g.adj, node)) == false
+
+## Is there an edge from `src` to `dst`?
+export fn has_edge(g, src, dst) {
+    tos = get(g.adj, src)
+    if is_null(tos) { return false }
+    contains(tos, dst)
+}
+
+## Every node, sorted.
+export fn nodes(g) = sort(keys(g.adj))
+
+## The nodes `node` points at, sorted. Raises if the node is unknown, because
+## silently returning `[]` for a typo is how a traversal quietly explores
+## nothing.
+export fn neighbors(g, node) {
+    tos = get(g.adj, node)
+    if is_null(tos) { fail("no such node '{node}'") }
+    sort(tos)
+}
+
+## Every edge as a sorted list of `[src, dst]`. An undirected edge appears once,
+## with its endpoints in sorted order.
+export fn edges(g) {
+    mut out = []
+    for src in nodes(g) {
+        for dst in neighbors(g, src) {
+            pair = if g.directed {
+                [src, dst]
+            } else {
+                if src < dst { [src, dst] } else { [dst, src] }
+            }
+            unless contains(out, pair) { out = push(out, pair) }
+        }
+    }
+    sort_with(out, fn(a, b) compare_pair(a, b))
+}
+
+# Order two edges: by source, then by target.
+fn compare_pair(a, b) {
+    if a[0] < b[0] { return -1 }
+    if a[0] > b[0] { return 1 }
+    if a[1] < b[1] { return -1 }
+    if a[1] > b[1] { return 1 }
+    0
+}
+
+## How many nodes.
+export fn order(g) = len(nodes(g))
+
+## How many edges.
+export fn size(g) = len(edges(g))
+
+## How many edges leave this node.
+export fn out_degree(g, node) = len(neighbors(g, node))
+
+## How many edges arrive at this node.
+export fn in_degree(g, node) {
+    unless has_node(g, node) { fail("no such node '{node}'") }
+    len(filter(nodes(g), fn(other) has_edge(g, other, node)))
+}
+
+## Out-degree plus in-degree. On an undirected graph both count the same edges,
+## so this is twice the neighbour count - use `out_degree` there instead.
+export fn degree(g, node) = out_degree(g, node) + in_degree(g, node)

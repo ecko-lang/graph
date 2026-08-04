@@ -1,0 +1,16 @@
+# graph - adjacency lists, traversal, and the questions they answer.
+#
+#   import graph
+#
+#   g = graph.from_edges([["alice", "bob"], ["bob", "dave"]])
+#   graph.reachable(g, "alice")        # ["bob", "dave"]
+#   graph.path(g, "alice", "dave")     # ["alice", "bob", "dave"]
+#   graph.topo_sort(g)                 # dependencies before dependants
+#
+# Built for the small explicit graphs that turn up in application code:
+# permission and delegation chains, dependency orders, category trees. Every
+# edge counts as one hop - weights, A* and max-flow are `graph_algo`.
+#
+# Pure computation - no capabilities.
+export * from "./build.ecko"
+export * from "./walk.ecko"

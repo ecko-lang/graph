@@ -1,0 +1,60 @@
+# graph - who can approve this spend?
+#
+#   ecko example.ecko
+#
+# An approval chain is a graph: each person can delegate to the people they
+# trust, and the question "who can sign this off" is "who is reachable from
+# here". Output is deterministic - every list this package returns is sorted.
+
+import "./main.ecko"
+graph = main
+
+# Who delegates to whom. Directed: alice trusting bob does not mean bob
+# trusts alice.
+approvals = graph.from_edges(
+    [["alice", "bob"], ["alice", "carol"], ["bob", "dave"], ["carol", "dave"], ["dave", "erin"]],
+)
+
+print("people: {graph.order(approvals)}, delegations: {graph.size(approvals)}")
+print("")
+
+print("Who can approve a request alice raised?")
+for who in graph.reachable(approvals, "alice") {
+    hops = graph.distance(approvals, "alice", who)
+    step = if hops == 1 { "step" } else { "steps" }
+    print("  {who} ({hops} {step} down the chain)")
+}
+print("")
+
+# The shortest chain is the one to ask first: fewest people to interrupt.
+route = graph.path(approvals, "alice", "erin")
+print("shortest route to erin: {join(route, \" -> \")}")
+print("erin can approve for alice: {graph.connected(approvals, \"erin\", \"alice\")}")
+print("")
+
+# A delegation loop would let a request approve itself, so it is worth
+# checking before trusting the chain.
+print("delegation loop? {graph.has_cycle(approvals)}")
+
+cycle = graph.from_edges([["ann", "ben"], ["ben", "cara"], ["cara", "ann"]])
+print("loop in ann -> ben -> cara -> ann? {graph.has_cycle(cycle)}")
+print("")
+
+# The same structure answers a different question: what order to do things in.
+build_order = graph.from_edges(
+    [["parse", "compile"], ["lex", "parse"], ["compile", "link"], ["assets", "link"]],
+)
+print("build order: {join(graph.topo_sort(build_order), \", \")}")
+print("")
+
+# Undirected: friendship goes both ways, so `components` finds the clusters.
+friends = graph.new({ directed: false })
+    |> graph.add_edge("ann", "ben")
+    |> graph.add_edge("ben", "cara")
+    |> graph.add_edge("dan", "eve")
+    |> graph.add_node("frank")
+
+print("friend groups:")
+for group in graph.components(friends) {
+    print("  {join(group, \", \")}")
+}
