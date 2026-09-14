@@ -12,5 +12,9 @@
 # edge counts as one hop - weights, A* and max-flow are `graph_algo`.
 #
 # Pure computation - no capabilities.
-export * from "./build.ecko"
+# `fail` is deliberately absent from this list. walk.ecko imports build.ecko
+# and calls `build.fail`, so it has to stay exported there to cross the file
+# boundary - but crossing a file boundary is not the same as being API, and a
+# blanket `export *` here would publish it as `graph.fail`.
+export { new, from_edges, add_node, add_edge, link, remove_edge, unlink, remove_node, has_node, has_edge, nodes, neighbors, edges, order, size, out_degree, in_degree, degree } from "./build.ecko"
 export * from "./walk.ecko"
