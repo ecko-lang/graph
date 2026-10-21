@@ -5,6 +5,7 @@
 # traversal order - has to sort or it would differ run to run. Most of these
 # assert on exact order for that reason, not because the order is interesting.
 import std.test
+import std.time
 import "../main.ecko"
 g = main
 
@@ -186,6 +187,52 @@ test.case("topo_sort orders dependencies before dependants", fn() {
     test.eq(first(order), "alice")
     test.eq(last(order), "erin")
     # Every edge must point forwards in the result.
+    for e in g.edges(x) {
+        test.ok(index_of(order, e[0]) < index_of(order, e[1]), "{e[0]} before {e[1]}")
+    }
+})
+
+test.case("topo_sort takes the smallest ready node at every step", fn() {
+    # b and c are ready from the start; a only once both are taken. The order is
+    # greedy - smallest ready node each step - not "sort all of layer one first".
+    x = g.from_edges([["c", "a"], ["b", "a"], ["d", "e"]])
+    test.eq(g.topo_sort(x), ["b", "c", "a", "d", "e"])
+    test.eq(g.topo_sort(approvals()), ["alice", "bob", "carol", "dave", "erin"])
+})
+
+test.case("topo_sort of an empty graph is empty", fn() {
+    test.eq(g.topo_sort(g.new()), [])
+})
+
+test.case("topo_sort ignores a self-loop", fn() {
+    # A node pointing at itself does not block itself.
+    test.eq(g.topo_sort(g.from_edges([["a", "a"], ["a", "b"]])), ["a", "b"])
+})
+
+test.case("topo_sort refuses an undirected edge, which runs both ways", fn() {
+    caught = try {
+        g.topo_sort(g.from_edges([["a", "b"]], { directed: false }))
+    } catch (e) {
+        get(e, "kind")
+    }
+    test.eq(caught, "graph")
+})
+
+test.case("topo_sort is not cubic in the node count", fn() {
+    # Every node depends on the one before it and the one seven back. This took
+    # about 8 s at 400 nodes when each step recounted every in-degree; Kahn's
+    # algorithm with counts kept as it goes takes milliseconds.
+    mut pairs = []
+    for i in 1..400 {
+        pairs = push(pairs, ["n{i - 1}", "n{i}"])
+        if i >= 7 { pairs = push(pairs, ["n{i - 7}", "n{i}"]) }
+    }
+    x = g.from_edges(pairs)
+    t0 = time.monotonic_ns()
+    order = g.topo_sort(x)
+    ms = (time.monotonic_ns() - t0) / 1000000
+    test.eq(len(order), 400)
+    test.ok(ms < 2000, "topo_sort of 400 nodes took {ms} ms")
     for e in g.edges(x) {
         test.ok(index_of(order, e[0]) < index_of(order, e[1]), "{e[0]} before {e[1]}")
     }

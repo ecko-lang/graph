@@ -92,7 +92,7 @@ graph.components(friends)   # [["ann", "ben"], ["dan", "eve"], ["frank"]]
 | `distance(g, src, dst)` | The number of hops on that route, or `null`. |
 | `components(g)` | Connected groups, each sorted, the list sorted by first member. |
 | `has_cycle(g)` | Is there a directed cycle? A diamond is not a cycle. |
-| `topo_sort(g)` | Nodes ordered so every edge points forwards. Raises on a cyclic graph. |
+| `topo_sort(g)` | Nodes ordered so every edge points forwards, taking the smallest ready node at each step. Raises on a cyclic graph. Linear in nodes plus edges. |
 
 ## Notes
 
