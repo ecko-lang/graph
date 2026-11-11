@@ -9,12 +9,12 @@
 #
 # Built for the small explicit graphs that turn up in application code:
 # permission and delegation chains, dependency orders, category trees. Every
-# edge counts as one hop - weights, A* and max-flow are `graph_algo`.
+# edge counts as one hop; there are no weights.
 #
 # Pure computation - no capabilities.
-# `fail` is deliberately absent from this list. walk.ecko imports build.ecko
-# and calls `build.fail`, so it has to stay exported there to cross the file
+# `fail`, `bad` and `need_node` are deliberately absent from this list. walk.ecko
+# imports build.ecko and calls them, so they stay exported there to cross the file
 # boundary - but crossing a file boundary is not the same as being API, and a
-# blanket `export *` here would publish it as `graph.fail`.
-export { new, from_edges, add_node, add_edge, link, remove_edge, unlink, remove_node, has_node, has_edge, nodes, neighbors, edges, order, size, out_degree, in_degree, degree } from "./build.ecko"
+# blanket `export *` here would publish them as `graph.fail` and so on.
+export { new, from_edges, add_node, add_edge, remove_edge, remove_node, has_node, has_edge, nodes, neighbors, edges, order, size, out_degree, in_degree, degree } from "./build.ecko"
 export * from "./walk.ecko"

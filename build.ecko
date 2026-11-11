@@ -8,63 +8,140 @@
 # Ecko maps are unordered, so without sorting, `nodes` would come back in a
 # different order on a different run and every traversal built on it would too.
 
-## The error this package raises.
-export fn fail(message) {
-    error({ kind: "graph", message: message })
+# Raise a `graph` failure (bad data, such as a missing node or a cycle). It is
+# exported only so walk.ecko can call it; main.ecko does not re-export it.
+export fn fail(reason, message) {
+    error({ kind: "graph", reason: reason, message: message })
 }
 
-## An empty graph. `opts` takes `{ directed: false }` for an undirected one;
-## the default is directed, because the questions this package is for - who can
-## approve this, what depends on what - have a direction.
-export fn new(opts = {}) {
-    directed = if is_null(get(opts, "directed")) { true } else { opts.directed }
+# Raise a `bug` for a programmer mistake. Exported for walk.ecko, as `fail`.
+export fn bad(reason, message) {
+    error({ kind: "bug", reason: reason, message: message })
+}
+
+# Nodes are strings: they are the keys of the adjacency map.
+fn check_node(who, node) {
+    unless is_string(node) {
+        bad("bad_node", "graph.{who}: nodes must be strings, got {type_of(node)} {node}")
+    }
+}
+
+# Exported for walk.ecko: raise unless `node` is in `g`.
+export fn need_node(who, g, node) {
+    unless has_node(g, node) { fail("no_such_node", "graph.{who}: no such node '{node}'") }
+}
+
+## Returns an empty graph, directed unless `directed: false`.
+##
+## Directed is the default because the questions this package is for - who
+## can approve this, what depends on what - have a direction.
+##
+## errors: `bug`/`bad_argument` when `directed` is not a Bool.
+##
+## example:
+##   friends = graph.new(directed: false)
+export fn new(directed = true) {
+    unless type_of(directed) == "bool" {
+        bad("bad_argument", "graph.new: directed must be true or false, got {directed}")
+    }
     { directed: directed, adj: {} }
 }
 
-## Build from a list of `[src, dst]` pairs.
-export fn from_edges(pairs, opts = {}) {
-    mut out = new(opts)
-    for p in pairs {
-        out = add_edge(out, p[0], p[1])
+## Returns a graph built from a list of `[src, dst]` pairs, directed unless
+## `directed: false`.
+##
+## errors: `bug`/`bad_argument` when `pairs` is not a list of two-element
+## lists or `directed` is not a Bool; `bug`/`bad_node` when a node is not a
+## string.
+##
+## example:
+##   graph.from_edges([["lex", "parse"], ["parse", "compile"]])
+export fn from_edges(pairs, directed = true) {
+    unless is_list(pairs) {
+        bad(
+            "bad_argument",
+            "graph.from_edges: pairs must be a list of [src, dst] pairs, got {type_of(pairs)}",
+        )
     }
-    out
+    base = new(directed: directed)
+    # One adjacency map owned here and changed in place: going through
+    # `add_edge` would copy the whole map once per edge.
+    mut adj = {}
+    for p in pairs {
+        unless is_list(p) and len(p) == 2 {
+            bad("bad_argument", "graph.from_edges: each edge must be a [src, dst] pair, got {p}")
+        }
+        src = p[0]
+        dst = p[1]
+        check_node("from_edges", src)
+        check_node("from_edges", dst)
+        unless src in adj { adj[src] = [] }
+        unless dst in adj { adj[dst] = [] }
+        unless contains(adj[src], dst) { adj[src] = push(adj[src], dst) }
+        if not directed and not contains(adj[dst], src) { adj[dst] = push(adj[dst], src) }
+    }
+    { directed: base.directed, adj: adj }
 }
 
-## Add a node with no edges. Adding one that exists changes nothing.
+## Returns `g` with a node that has no edges. Adding one that exists changes
+## nothing.
+##
+## errors: `bug`/`bad_node` when `node` is not a string.
+##
+## example:
+##   graph.new() |> graph.add_node("solo")
 export fn add_node(g, node) {
+    check_node("add_node", node)
     if has_node(g, node) { return g }
     insert(g, "adj", insert(g.adj, node, []))
 }
 
-## Add an edge, adding either endpoint that is missing. In an undirected graph
-## the reverse edge is added too. Adding the same edge twice changes nothing.
+## Returns `g` with an edge from `src` to `dst`, adding either endpoint that is
+## missing. An undirected graph gets the reverse edge too. Adding the same edge
+## twice changes nothing.
+##
+## errors: `bug`/`bad_node` when an endpoint is not a string.
+##
+## example:
+##   graph.new() |> graph.add_edge("alice", "bob")
 export fn add_edge(g, src, dst) {
+    check_node("add_edge", src)
+    check_node("add_edge", dst)
     mut out = add_node(add_node(g, src), dst)
     out = link(out, src, dst)
     if out.directed { out } else { link(out, dst, src) }
 }
 
-## Record one direction of an edge.
-export fn link(g, src, dst) {
+# Record one direction of an edge; both endpoints already exist.
+fn link(g, src, dst) {
     current = get(g.adj, src)
     if contains(current, dst) { return g }
     insert(g, "adj", insert(g.adj, src, push(current, dst)))
 }
 
-## Remove an edge, leaving both nodes in place.
+## Returns `g` without the edge from `src` to `dst` (both directions in an
+## undirected graph), leaving both nodes in place. Removing an edge that is not
+## there changes nothing.
+##
+## example:
+##   graph.remove_edge(g, "alice", "bob")
 export fn remove_edge(g, src, dst) {
     mut out = unlink(g, src, dst)
     if out.directed { out } else { unlink(out, dst, src) }
 }
 
-## Drop one direction of an edge.
-export fn unlink(g, src, dst) {
+# Drop one direction of an edge.
+fn unlink(g, src, dst) {
     current = get(g.adj, src)
     if is_null(current) { return g }
     insert(g, "adj", insert(g.adj, src, filter(current, fn(n) n != dst)))
 }
 
-## Remove a node and every edge touching it.
+## Returns `g` without `node` and every edge touching it. Removing a node that
+## is not there changes nothing.
+##
+## example:
+##   graph.remove_node(g, "bob")
 export fn remove_node(g, node) {
     unless has_node(g, node) { return g }
     mut adj = remove(g.adj, node)
@@ -74,30 +151,48 @@ export fn remove_node(g, node) {
     insert(g, "adj", adj)
 }
 
-## Is this node in the graph?
+## Returns true when `node` is in the graph.
+##
+## example:
+##   graph.has_node(g, "alice")
 export fn has_node(g, node) = is_null(get(g.adj, node)) == false
 
-## Is there an edge from `src` to `dst`?
+## Returns true when there is an edge from `src` to `dst`.
+##
+## example:
+##   graph.has_edge(g, "alice", "bob")
 export fn has_edge(g, src, dst) {
     tos = get(g.adj, src)
     if is_null(tos) { return false }
     contains(tos, dst)
 }
 
-## Every node, sorted.
+## Returns every node, sorted.
+##
+## example:
+##   graph.nodes(graph.from_edges([["b", "a"]]))   # [a, b]
 export fn nodes(g) = sort(keys(g.adj))
 
-## The nodes `node` points at, sorted. Raises if the node is unknown, because
-## silently returning `[]` for a typo is how a traversal quietly explores
-## nothing.
+## Returns the nodes `node` points at, sorted.
+##
+## An unknown node raises rather than returning `[]`, because silently
+## returning nothing for a typo is how a traversal quietly explores nothing.
+##
+## errors: `graph`/`no_such_node` when `node` is not in the graph.
+##
+## example:
+##   graph.neighbors(g, "alice")
 export fn neighbors(g, node) {
     tos = get(g.adj, node)
-    if is_null(tos) { fail("no such node '{node}'") }
+    if is_null(tos) { fail("no_such_node", "graph.neighbors: no such node '{node}'") }
     sort(tos)
 }
 
-## Every edge as a sorted list of `[src, dst]`. An undirected edge appears once,
-## with its endpoints in sorted order.
+## Returns every edge as a sorted list of `[src, dst]` pairs. An undirected
+## edge appears once, with its endpoints in sorted order.
+##
+## example:
+##   graph.edges(graph.from_edges([["b", "a"]], directed: false))   # [[a, b]]
 export fn edges(g) {
     mut out = []
     for src in nodes(g) {
@@ -122,21 +217,50 @@ fn compare_pair(a, b) {
     0
 }
 
-## How many nodes.
+## Returns how many nodes the graph has.
+##
+## example:
+##   graph.order(g)
 export fn order(g) = len(nodes(g))
 
-## How many edges.
+## Returns how many edges the graph has; an undirected edge counts once.
+##
+## example:
+##   graph.size(g)
 export fn size(g) = len(edges(g))
 
-## How many edges leave this node.
-export fn out_degree(g, node) = len(neighbors(g, node))
+## Returns how many edges leave `node`.
+##
+## errors: `graph`/`no_such_node` when `node` is not in the graph.
+##
+## example:
+##   graph.out_degree(g, "alice")
+export fn out_degree(g, node) {
+    need_node("out_degree", g, node)
+    len(neighbors(g, node))
+}
 
-## How many edges arrive at this node.
+## Returns how many edges arrive at `node`.
+##
+## errors: `graph`/`no_such_node` when `node` is not in the graph.
+##
+## example:
+##   graph.in_degree(g, "dave")
 export fn in_degree(g, node) {
-    unless has_node(g, node) { fail("no such node '{node}'") }
+    need_node("in_degree", g, node)
     len(filter(nodes(g), fn(other) has_edge(g, other, node)))
 }
 
-## Out-degree plus in-degree. On an undirected graph both count the same edges,
-## so this is twice the neighbour count - use `out_degree` there instead.
-export fn degree(g, node) = out_degree(g, node) + in_degree(g, node)
+## Returns the out-degree plus the in-degree of `node`.
+##
+## On an undirected graph both count the same edges, so this is twice the
+## neighbour count; use `out_degree` there instead.
+##
+## errors: `graph`/`no_such_node` when `node` is not in the graph.
+##
+## example:
+##   graph.degree(g, "dave")
+export fn degree(g, node) {
+    need_node("degree", g, node)
+    len(neighbors(g, node)) + in_degree(g, node)
+}

@@ -48,7 +48,7 @@ print("build order: {join(graph.topo_sort(build_order), \", \")}")
 print("")
 
 # Undirected: friendship goes both ways, so `components` finds the clusters.
-friends = graph.new({ directed: false })
+friends = graph.new(directed: false)
     |> graph.add_edge("ann", "ben")
     |> graph.add_edge("ben", "cara")
     |> graph.add_edge("dan", "eve")

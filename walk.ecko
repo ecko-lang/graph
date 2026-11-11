@@ -3,89 +3,126 @@
 # Neighbours arrive sorted (see build.ecko), so every order below is stable:
 # the same graph gives the same walk every run, which is what makes these
 # testable and their output diffable.
+#
+# Nothing here recurses. Every walk keeps its own queue or stack, so a long
+# chain cannot reach the recursion limit, and "seen" sets are maps so a large
+# graph is not quadratic in lookups.
 
 import "./build.ecko"
 
-## Breadth-first order from `start`, including `start` itself.
+## Returns the nodes in breadth-first order from `start`, `start` first.
 ##
-## Layer by layer, so the order doubles as "how far away is each node" - which
-## is why `path` is built on this rather than on `dfs`.
+## Layer by layer, so the order doubles as "how far away is each node", which
+## is why `path` is built on the same walk rather than on `dfs`.
+##
+## errors: `graph`/`no_such_node` when `start` is not in the graph.
+##
+## example:
+##   graph.bfs(g, "alice")
 export fn bfs(g, start) {
-    unless build.has_node(g, start) { build.fail("no such node '{start}'") }
-    mut seen = [start]
+    build.need_node("bfs", g, start)
+    breadth_first(g, start)
+}
+
+fn breadth_first(g, start) {
+    mut seen = {}
+    seen[start] = true
     mut queue = [start]
-    mut out = []
-    while len(queue) > 0 {
-        node = first(queue)
-        queue = drop(queue, 1)
-        out = push(out, node)
+    mut head = 0
+    while head < len(queue) {
+        node = queue[head]
+        head += 1
         for n in build.neighbors(g, node) {
-            unless contains(seen, n) {
-                seen = push(seen, n)
+            unless n in seen {
+                seen[n] = true
                 queue = push(queue, n)
             }
         }
     }
-    out
+    queue
 }
 
-## Depth-first order from `start`, including `start` itself.
+## Returns the nodes in depth-first order from `start`, `start` first.
 ##
-## Iterative rather than recursive: a long chain would otherwise hit the
-## recursion cap, and a graph big enough to matter is exactly the one that has
-## long chains.
+## errors: `graph`/`no_such_node` when `start` is not in the graph.
+##
+## example:
+##   graph.dfs(g, "alice")
 export fn dfs(g, start) {
-    unless build.has_node(g, start) { build.fail("no such node '{start}'") }
+    build.need_node("dfs", g, start)
     mut stack = [start]
-    mut seen = []
+    mut seen = {}
     mut out = []
     while len(stack) > 0 {
         node = last(stack)
         stack = take(stack, len(stack) - 1)
-        unless contains(seen, node) {
-            seen = push(seen, node)
+        unless node in seen {
+            seen[node] = true
             out = push(out, node)
             # Pushed in reverse so the first neighbour is popped first, which
             # makes the walk match the sorted order rather than reverse it.
             for n in reverse(build.neighbors(g, node)) {
-                unless contains(seen, n) { stack = push(stack, n) }
+                unless n in seen { stack = push(stack, n) }
             }
         }
     }
     out
 }
 
-## Every node reachable from `start`, sorted, excluding `start` itself.
+## Returns every node reachable from `start`, sorted, excluding `start` itself.
 ##
-## The card's question: who can approve this spend, directly or by delegation?
+## The question it answers: who can approve this spend, directly or by
+## delegation?
+##
+## errors: `graph`/`no_such_node` when `start` is not in the graph.
+##
+## example:
+##   graph.reachable(g, "alice")
 export fn reachable(g, start) {
-    sort(filter(bfs(g, start), fn(n) n != start))
+    build.need_node("reachable", g, start)
+    sort(filter(breadth_first(g, start), fn(n) n != start))
 }
 
-## Can `src` reach `dst`? A node always reaches itself.
+## Returns true when `src` can reach `dst` by following edges. A node always
+## reaches itself.
+##
+## errors: `graph`/`no_such_node` when `src` or `dst` is not in the graph.
+##
+## example:
+##   graph.connected(g, "alice", "erin")
 export fn connected(g, src, dst) {
-    if src == dst { return build.has_node(g, src) }
-    contains(bfs(g, src), dst)
+    build.need_node("connected", g, src)
+    build.need_node("connected", g, dst)
+    if src == dst { return true }
+    contains(breadth_first(g, src), dst)
 }
 
-## The fewest-hops path from `src` to `dst`, or null if there is none.
+## Returns the fewest-hops path from `src` to `dst` as a list of nodes, or null
+## when there is none.
 ##
 ## Breadth-first, so the first time `dst` is seen is by a shortest route. Every
-## edge counts as one hop: weights are a different package (`graph_algo`).
-export fn path(g, src, dst) {
-    unless build.has_node(g, src) { build.fail("no such node '{src}'") }
-    unless build.has_node(g, dst) { build.fail("no such node '{dst}'") }
+## edge counts as one hop; there are no weights.
+##
+## errors: `graph`/`no_such_node` when `src` or `dst` is not in the graph.
+##
+## example:
+##   graph.path(g, "alice", "erin")
+export fn path(g, src, dst) = shortest("path", g, src, dst)
+
+fn shortest(who, g, src, dst) {
+    build.need_node(who, g, src)
+    build.need_node(who, g, dst)
     if src == dst { return [src] }
     mut came_from = {}
-    mut seen = [src]
+    came_from[src] = src
     mut queue = [src]
-    while len(queue) > 0 {
-        node = first(queue)
-        queue = drop(queue, 1)
+    mut head = 0
+    while head < len(queue) {
+        node = queue[head]
+        head += 1
         for n in build.neighbors(g, node) {
-            unless contains(seen, n) {
-                seen = push(seen, n)
-                came_from = insert(came_from, n, node)
+            unless n in came_from {
+                came_from[n] = node
                 if n == dst { return trace(came_from, src, dst) }
                 queue = push(queue, n)
             }
@@ -99,93 +136,172 @@ fn trace(came_from, src, dst) {
     mut out = [dst]
     mut current = dst
     while current != src {
-        current = get(came_from, current)
+        current = came_from[current]
         out = push(out, current)
     }
     reverse(out)
 }
 
-## The number of hops on the shortest path, or null if unreachable.
+## Returns the number of hops on the shortest path from `src` to `dst`, or null
+## when `dst` is unreachable.
+##
+## errors: `graph`/`no_such_node` when `src` or `dst` is not in the graph.
+##
+## example:
+##   graph.distance(g, "alice", "erin")
 export fn distance(g, src, dst) {
-    p = path(g, src, dst)
+    p = shortest("distance", g, src, dst)
     if is_null(p) { null } else { len(p) - 1 }
 }
 
-## Connected components, each sorted, the list sorted by first member.
+## Returns the connected components, each sorted, the list sorted by first
+## member.
 ##
-## Meaningful on an undirected graph. On a directed one this follows edges
-## forwards only, so it reports what is reachable rather than true weak
-## components.
+## On a directed graph these are the weakly connected components: edges are
+## followed in both directions, so every node is in exactly one component.
+##
+## example:
+##   graph.components(graph.from_edges([["a", "b"], ["c", "b"]]))   # [[a, b, c]]
 export fn components(g) {
-    mut out = []
-    mut placed = []
+    # Both directions of every edge, so a directed graph gives weak components.
+    mut both = {}
     for n in build.nodes(g) {
-        unless contains(placed, n) {
-            group = sort(bfs(g, n))
-            # A later node may already sit in an earlier group.
-            unless contains(placed, first(group)) {
-                out = push(out, group)
-                for m in group {
-                    placed = push(placed, m)
-                }
+        both[n] = build.neighbors(g, n)
+    }
+    if g.directed {
+        for src in build.nodes(g) {
+            for dst in build.neighbors(g, src) {
+                both[dst] = push(both[dst], src)
             }
         }
     }
+    mut placed = {}
+    mut out = []
+    for start in build.nodes(g) {
+        unless start in placed {
+            placed[start] = true
+            mut group = [start]
+            mut head = 0
+            while head < len(group) {
+                node = group[head]
+                head += 1
+                for n in both[node] {
+                    unless n in placed {
+                        placed[n] = true
+                        group = push(group, n)
+                    }
+                }
+            }
+            out = push(out, sort(group))
+        }
+    }
+    # Starts are visited in sorted order and each start is its group's
+    # smallest unplaced node, so the groups are already sorted by first member.
     out
 }
 
-## Does the graph contain a directed cycle?
+## Returns true when the graph contains a cycle.
 ##
-## Depth-first with three colours: unvisited, on the current path, and finished.
-## An edge back to something on the current path is a cycle; an edge to
-## something merely finished is a diamond, which is not.
+## On a directed graph that is a directed cycle, a self-loop included; a
+## diamond is not one. On an undirected graph it is a closed walk that does not
+## reuse an edge, so a single edge is not a cycle but a triangle or a self-loop
+## is.
+##
+## example:
+##   graph.has_cycle(graph.from_edges([["a", "b"], ["b", "a"]]))   # true
 export fn has_cycle(g) {
-    mut finished = []
-    for start in build.nodes(g) {
-        unless contains(finished, start) {
-            found = cycle_from(g, start, [], finished)
-            if found.cycle { return true }
-            finished = found.finished
+    if g.directed { directed_cycle(g) } else { undirected_cycle(g) }
+}
+
+# Depth-first with three states: absent (unvisited), 1 (on the current path)
+# and 2 (finished). An edge back to a node on the current path is a cycle; an
+# edge to a finished node is a diamond, which is not. The stack holds
+# [node, index of the next neighbour to try].
+fn directed_cycle(g) {
+    mut state = {}
+    for root in build.nodes(g) {
+        unless root in state {
+            state[root] = 1
+            mut stack = [[root, 0]]
+            while len(stack) > 0 {
+                top = last(stack)
+                node = top[0]
+                i = top[1]
+                tos = build.neighbors(g, node)
+                if i < len(tos) {
+                    stack[len(stack) - 1] = [node, i + 1]
+                    n = tos[i]
+                    s = get(state, n)
+                    if s == 1 { return true }
+                    if s == null {
+                        state[n] = 1
+                        stack = push(stack, [n, 0])
+                    }
+                } else {
+                    state[node] = 2
+                    stack = take(stack, len(stack) - 1)
+                }
+            }
         }
     }
     false
 }
 
-# Recursive helper for `has_cycle`. Returns `{ cycle, finished }`.
-fn cycle_from(g, node, on_path, finished) {
-    if contains(on_path, node) { return { cycle: true, finished: finished } }
-    if contains(finished, node) { return { cycle: false, finished: finished } }
-    mut done = finished
-    path_now = push(on_path, node)
-    for n in build.neighbors(g, node) {
-        found = cycle_from(g, n, path_now, done)
-        if found.cycle { return { cycle: true, finished: found.finished } }
-        done = found.finished
+# Depth-first, remembering the node each one was reached from. Meeting an
+# already-visited node other than that parent closes a cycle. Edges are stored
+# once per direction with no duplicates, so the parent edge is the only one to
+# skip; a self-loop is its own cycle.
+fn undirected_cycle(g) {
+    mut parent = {}
+    for root in build.nodes(g) {
+        unless root in parent {
+            parent[root] = null
+            mut stack = [root]
+            while len(stack) > 0 {
+                node = last(stack)
+                stack = take(stack, len(stack) - 1)
+                for n in build.neighbors(g, node) {
+                    if n == node { return true }
+                    if n in parent { if n != parent[node] { return true } } else {
+                        parent[n] = node
+                        stack = push(stack, n)
+                    }
+                }
+            }
+        }
     }
-    { cycle: false, finished: push(done, node) }
+    false
 }
 
-## Nodes ordered so every edge points forwards. Raises on a cyclic graph rather
-## than returning an order that cannot exist.
+## Returns the nodes ordered so every edge points forwards.
 ##
 ## Kahn's algorithm: repeatedly take a node nothing points at. Ties are broken
 ## by taking the smallest ready node at each step, so the result is stable
-## rather than merely valid. A self-loop does not block its own node. Linear in
-## nodes plus edges, apart from keeping the ready list sorted.
+## rather than merely valid. Linear in nodes plus edges, apart from keeping the
+## ready list sorted.
+##
+## errors: `graph`/`cycle` when the graph has a cycle (a self-loop included);
+## `bug`/`bad_argument` when the graph is undirected.
+##
+## example:
+##   graph.topo_sort(graph.from_edges([["parse", "compile"], ["lex", "parse"]]))   # [lex, parse, compile]
 export fn topo_sort(g) {
+    unless g.directed {
+        build.bad("bad_argument", "graph.topo_sort: a topological order needs a directed graph")
+    }
     all = build.nodes(g)
     # Every in-degree is counted once, up front, and only decremented after.
     # Recounting them on every step made this cubic: 26 s for 600 nodes.
     mut indegree = {}
     for n in all {
-        indegree = insert(indegree, n, 0)
+        indegree[n] = 0
     }
     for src in all {
         for dst in build.neighbors(g, src) {
-            if dst != src { indegree = insert(indegree, dst, get(indegree, dst) + 1) }
+            indegree[dst] = indegree[dst] + 1
         }
     }
-    mut ready = filter(all, fn(n) get(indegree, n) == 0)
+    mut ready = filter(all, fn(n) indegree[n] == 0)
     mut out = []
     while len(ready) > 0 {
         node = first(ready)
@@ -193,15 +309,18 @@ export fn topo_sort(g) {
         out = push(out, node)
         mut freed = []
         for dst in build.neighbors(g, node) {
-            if dst != node {
-                left = get(indegree, dst) - 1
-                indegree = insert(indegree, dst, left)
-                if left == 0 { freed = push(freed, dst) }
-            }
+            left = indegree[dst] - 1
+            indegree[dst] = left
+            if left == 0 { freed = push(freed, dst) }
         }
         if len(freed) > 0 { ready = sort(flatten([ready, freed])) }
     }
     # Whatever never reached zero sits on a cycle.
-    if len(out) < len(all) { build.fail("graph has a cycle, so no topological order exists") }
+    if len(out) < len(all) {
+        build.fail(
+            "cycle",
+            "graph.topo_sort: the graph has a cycle, so no topological order exists",
+        )
+    }
     out
 }

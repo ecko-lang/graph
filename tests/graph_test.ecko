@@ -9,7 +9,7 @@ import std.time
 import "../main.ecko"
 g = main
 
-## The permission graph from the card: who can approve a spend, via delegation.
+# The permission graph from the card: who can approve a spend, via delegation.
 fn approvals() {
     g.from_edges(
         [
@@ -20,6 +20,20 @@ fn approvals() {
             ["dave", "erin"],
         ],
     )
+}
+
+fn kind_reason(f) = try {
+    f()
+    null
+} catch (e) { "{get(e, "kind")}/{get(e, "reason")}" }
+
+# A chain n0 -> n1 -> ... of `n` nodes.
+fn chain(n, directed) {
+    mut pairs = []
+    for i in 1..n {
+        pairs = push(pairs, ["n{i - 1}", "n{i}"])
+    }
+    g.from_edges(pairs, directed: directed)
 }
 
 # --- building ----------------------------------------------------------------
@@ -42,7 +56,7 @@ test.case("adding an edge adds both endpoints", fn() {
 })
 
 test.case("an undirected graph carries edges both ways", fn() {
-    x = g.new({ directed: false }) |> g.add_edge("a", "b")
+    x = g.new(directed: false) |> g.add_edge("a", "b")
     test.ok(g.has_edge(x, "a", "b"), "a-b")
     test.ok(g.has_edge(x, "b", "a"), "b-a")
     # One undirected edge is one edge, not two.
@@ -163,7 +177,7 @@ test.case("degree counts edges at a node", fn() {
 })
 
 test.case("components groups an undirected graph", fn() {
-    x = g.new({ directed: false })
+    x = g.new(directed: false)
         |> g.add_edge("a", "b")
         |> g.add_edge("c", "d")
         |> g.add_node("lonely")
@@ -204,18 +218,17 @@ test.case("topo_sort of an empty graph is empty", fn() {
     test.eq(g.topo_sort(g.new()), [])
 })
 
-test.case("topo_sort ignores a self-loop", fn() {
-    # A node pointing at itself does not block itself.
-    test.eq(g.topo_sort(g.from_edges([["a", "a"], ["a", "b"]])), ["a", "b"])
+test.case("a self-loop is a cycle, for has_cycle and topo_sort alike", fn() {
+    x = g.from_edges([["a", "a"], ["a", "b"]])
+    test.ok(g.has_cycle(x), "self-loop is a cycle")
+    test.eq(kind_reason(fn() g.topo_sort(x)), "graph/cycle")
 })
 
-test.case("topo_sort refuses an undirected edge, which runs both ways", fn() {
-    caught = try {
-        g.topo_sort(g.from_edges([["a", "b"]], { directed: false }))
-    } catch (e) {
-        get(e, "kind")
-    }
-    test.eq(caught, "graph")
+test.case("topo_sort refuses an undirected graph", fn() {
+    test.eq(
+        kind_reason(fn() g.topo_sort(g.from_edges([["a", "b"]], directed: false))),
+        "bug/bad_argument",
+    )
 })
 
 test.case("topo_sort is not cubic in the node count", fn() {
@@ -239,10 +252,72 @@ test.case("topo_sort is not cubic in the node count", fn() {
 })
 
 test.case("topo_sort refuses a cyclic graph rather than returning nonsense", fn() {
-    caught = try {
-        g.topo_sort(g.from_edges([["a", "b"], ["b", "a"]]))
-    } catch (e) {
-        get(e, "kind")
-    }
-    test.eq(caught, "graph")
+    test.eq(kind_reason(fn() g.topo_sort(g.from_edges([["a", "b"], ["b", "a"]]))), "graph/cycle")
+})
+
+# --- fixes ---------------------------------------------------------------------
+
+test.case("components on a directed graph keeps every node (weak components)", fn() {
+    test.eq(g.components(g.from_edges([["a", "b"], ["c", "b"]])), [["a", "b", "c"]])
+    test.eq(g.components(g.from_edges([["b", "a"]])), [["a", "b"]])
+    x = g.from_edges([["a", "b"], ["d", "c"]]) |> g.add_node("e")
+    test.eq(g.components(x), [["a", "b"], ["c", "d"], ["e"]])
+})
+
+test.case("has_cycle on an undirected graph needs a real cycle", fn() {
+    test.ok(not g.has_cycle(g.from_edges([["a", "b"]], directed: false)), "one edge")
+    test.ok(
+        not g.has_cycle(g.from_edges([["a", "b"], ["b", "c"], ["b", "d"]], directed: false)),
+        "tree",
+    )
+    test.ok(
+        g.has_cycle(g.from_edges([["a", "b"], ["b", "c"], ["c", "a"]], directed: false)),
+        "triangle",
+    )
+    test.ok(g.has_cycle(g.from_edges([["a", "a"]], directed: false)), "self-loop")
+})
+
+test.case("has_cycle does not overflow the recursion limit on a long chain", fn() {
+    test.ok(not g.has_cycle(chain(5000, true)), "directed chain")
+    test.ok(not g.has_cycle(chain(5000, false)), "undirected chain")
+    closed = g.add_edge(chain(5000, true), "n4999", "n0")
+    test.ok(g.has_cycle(closed), "closed loop")
+})
+
+test.case("nodes must be strings", fn() {
+    test.eq(kind_reason(fn() g.from_edges([[10, 9]])), "bug/bad_node")
+    test.eq(kind_reason(fn() g.add_node(g.new(), null)), "bug/bad_node")
+    test.eq(kind_reason(fn() g.add_edge(g.new(), "a", 1)), "bug/bad_node")
+})
+
+test.case("an edge that is not a pair is refused", fn() {
+    test.eq(kind_reason(fn() g.from_edges([["a"]])), "bug/bad_argument")
+})
+
+test.case("connected raises for an unknown node on either side", fn() {
+    x = g.from_edges([["a", "b"]])
+    test.eq(kind_reason(fn() g.connected(x, "zz", "a")), "graph/no_such_node")
+    test.eq(kind_reason(fn() g.connected(x, "a", "zz")), "graph/no_such_node")
+    test.eq(kind_reason(fn() g.connected(x, "zz", "zz")), "graph/no_such_node")
+    test.ok(not g.connected(x, "b", "a"), "directed")
+})
+
+test.case("distance is null when unreachable", fn() {
+    x = g.from_edges([["a", "b"]]) |> g.add_node("c")
+    test.eq(g.distance(x, "a", "c"), null)
+    test.eq(g.distance(x, "a", "b"), 1)
+})
+
+test.case("bad options and bad edges are refused", fn() {
+    test.eq(kind_reason(fn() g.new(directed: "no")), "bug/bad_argument")
+    test.eq(kind_reason(fn() g.new({ directed: false })), "bug/bad_argument")
+    test.eq(kind_reason(fn() g.from_edges("ab")), "bug/bad_argument")
+})
+
+test.case("traversals stay fast on a long chain", fn() {
+    x = chain(3000, true)
+    test.eq(len(g.bfs(x, "n0")), 3000)
+    test.eq(len(g.dfs(x, "n0")), 3000)
+    test.eq(g.distance(x, "n0", "n2999"), 2999)
+    test.eq(len(g.components(chain(3000, false))), 1)
 })

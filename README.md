@@ -1,14 +1,8 @@
 # graph
 
-Adjacency lists, traversal, and the questions they answer: what can reach what,
-by which route, and in what order.
-
-Built for the small explicit graphs that turn up in application code -
-permission and delegation chains, dependency orders, category trees. Every edge
-counts as one hop. Weights, shortest-path-by-cost and flow are a separate
-package.
-
-Pure computation: no capabilities, no I/O.
+Adjacency-list graphs for [Ecko](https://ecko.sh) and the questions they
+answer: what can reach what, by which route, and in what order. Pure
+computation - no capabilities.
 
 ## Install
 
@@ -33,85 +27,110 @@ approvals = graph.from_edges([
     ["dave", "erin"],
 ])
 
-graph.reachable(approvals, "alice")      # ["bob", "carol", "dave", "erin"]
-graph.path(approvals, "alice", "erin")   # ["alice", "bob", "dave", "erin"]
-graph.distance(approvals, "alice", "erin")   # 3
-graph.connected(approvals, "erin", "alice")  # false - delegation has a direction
-graph.has_cycle(approvals)               # false - nobody can approve their own request
+print(graph.reachable(approvals, "alice"))  # [bob, carol, dave, erin]
+print(graph.path(approvals, "alice", "erin"))  # [alice, bob, dave, erin]
+print(graph.distance(approvals, "alice", "erin"))  # 3
+print(graph.connected(approvals, "erin", "alice"))  # false - delegation has a direction
+print(graph.has_cycle(approvals))  # false - nobody can approve their own request
 
 # The same structure answers "what order do I build these in?"
 deps = graph.from_edges([["lex", "parse"], ["parse", "compile"]])
-graph.topo_sort(deps)                    # ["lex", "parse", "compile"]
+print(graph.topo_sort(deps))  # [lex, parse, compile]
 ```
 
-Builders return a new graph rather than mutating, so they compose:
+### Undirected graphs
+
+Builders return a new graph rather than changing the one they were given, so
+they compose with `|>`:
 
 ```ecko
-friends = graph.new({ directed: false })
+import graph
+
+friends = graph.new(directed: false)
     |> graph.add_edge("ann", "ben")
     |> graph.add_edge("dan", "eve")
     |> graph.add_node("frank")
 
-graph.components(friends)   # [["ann", "ben"], ["dan", "eve"], ["frank"]]
+print(graph.components(friends))  # [[ann, ben], [dan, eve], [frank]]
+print(graph.has_cycle(friends))  # false - one edge is not a cycle
 ```
 
 ## API
 
 ### Building
 
-| Function | Result |
+| function | returns |
 |---|---|
-| `new(opts = {})` | An empty graph. `{ directed: false }` for an undirected one; the default is directed. |
-| `from_edges(pairs, opts = {})` | A graph built from a list of `[src, dst]` pairs. |
-| `add_node(g, node)` | `g` with `node` in it. Adding one that exists changes nothing. |
-| `add_edge(g, src, dst)` | `g` with the edge, adding either endpoint that is missing. Undirected graphs get the reverse edge too. |
-| `remove_edge(g, src, dst)` | `g` without that edge. Both nodes stay. |
-| `remove_node(g, node)` | `g` without that node or any edge touching it. |
-| `link(g, src, dst)` / `unlink(g, src, dst)` | One direction only. `add_edge`/`remove_edge` are built on these. |
+| `new(directed: true)` | an empty graph, directed unless `directed: false` |
+| `from_edges(pairs, directed: true)` | a graph built from a list of `[src, dst]` pairs |
+| `add_node(g, node)` | `g` with `node` in it; adding one that exists changes nothing |
+| `add_edge(g, src, dst)` | `g` with the edge, adding either endpoint that is missing; an undirected graph gets the reverse edge too |
+| `remove_edge(g, src, dst)` | `g` without that edge; both nodes stay |
+| `remove_node(g, node)` | `g` without that node or any edge touching it |
 
 ### Inspecting
 
-| Function | Result |
+| function | returns |
 |---|---|
-| `nodes(g)` | Every node, sorted. |
-| `edges(g)` | Every edge as sorted `[src, dst]` pairs. An undirected edge appears once. |
-| `neighbors(g, node)` | The nodes `node` points at, sorted. Raises if the node is unknown. |
-| `has_node(g, node)` / `has_edge(g, src, dst)` | Booleans. |
-| `order(g)` / `size(g)` | How many nodes / how many edges. |
-| `out_degree(g, node)` / `in_degree(g, node)` / `degree(g, node)` | Edge counts at a node. |
+| `nodes(g)` | every node, sorted |
+| `edges(g)` | every edge as sorted `[src, dst]` pairs; an undirected edge appears once |
+| `neighbors(g, node)` | the nodes `node` points at, sorted |
+| `has_node(g, node)` | `true` when `node` is in the graph |
+| `has_edge(g, src, dst)` | `true` when there is an edge from `src` to `dst` |
+| `order(g)` | how many nodes |
+| `size(g)` | how many edges |
+| `out_degree(g, node)` | how many edges leave `node` |
+| `in_degree(g, node)` | how many edges arrive at `node` |
+| `degree(g, node)` | out-degree plus in-degree |
 
 ### Traversing
 
-| Function | Result |
+| function | returns |
 |---|---|
-| `bfs(g, start)` | Breadth-first order, `start` first. |
-| `dfs(g, start)` | Depth-first order, `start` first. |
-| `reachable(g, start)` | Everything reachable from `start`, sorted, excluding `start`. |
-| `connected(g, src, dst)` | Can `src` reach `dst`? A node always reaches itself. |
-| `path(g, src, dst)` | The fewest-hops route as a list of nodes, or `null` if there is none. |
-| `distance(g, src, dst)` | The number of hops on that route, or `null`. |
-| `components(g)` | Connected groups, each sorted, the list sorted by first member. |
-| `has_cycle(g)` | Is there a directed cycle? A diamond is not a cycle. |
-| `topo_sort(g)` | Nodes ordered so every edge points forwards, taking the smallest ready node at each step. Raises on a cyclic graph. Linear in nodes plus edges. |
+| `bfs(g, start)` | the nodes in breadth-first order, `start` first |
+| `dfs(g, start)` | the nodes in depth-first order, `start` first |
+| `reachable(g, start)` | everything reachable from `start`, sorted, excluding `start` |
+| `connected(g, src, dst)` | `true` when `src` can reach `dst`; a node always reaches itself |
+| `path(g, src, dst)` | the fewest-hops route as a list of nodes, or `null` if there is none |
+| `distance(g, src, dst)` | the number of hops on that route, or `null` |
+| `components(g)` | the connected groups (weak components on a directed graph), each sorted, the list sorted by first member |
+| `has_cycle(g)` | `true` when the graph has a cycle; a diamond is not one, and on an undirected graph neither is a single edge |
+| `topo_sort(g)` | the nodes ordered so every edge points forwards, smallest ready node first |
 
 ## Notes
+
+### Errors
+
+| kind | reason | when |
+|---|---|---|
+| `graph` | `no_such_node` | a traversal or degree names a node that is not in the graph |
+| `graph` | `cycle` | `topo_sort` on a graph with a cycle, a self-loop included |
+| `bug` | `bad_node` | a node is not a string |
+| `bug` | `bad_argument` | `directed` is not a Bool, `from_edges` got something other than a list of pairs, or `topo_sort` got an undirected graph |
+
+### Behaviour
+
+**Nodes are strings.** They are the keys of the graph's adjacency map; convert
+ids with `string(id)` first.
 
 **Everything that returns a list is sorted.** A graph is stored as a map, and
 Ecko maps are unordered, so an unsorted `nodes` would come back differently on a
 different run and every traversal built on it would inherit that. Sorting is
 what makes these results testable, diffable and reproducible.
 
-**Traversal is iterative, not recursive.** A long chain would otherwise hit the
-recursion cap, and a graph big enough to matter is exactly the one that has long
-chains. `has_cycle` is the exception: it recurses, so it is bounded by the depth
-of the graph rather than its size.
+**Nothing recurses.** Every traversal, `has_cycle` included, keeps its own
+queue or stack, so a long chain cannot reach the recursion limit.
 
 **Unknown nodes raise rather than returning empty.** `neighbors(g, "typo")`
-raises `{ kind: "graph", message: ... }`. Silently returning `[]` is how a
-traversal quietly explores nothing and reports success.
+raises `graph`/`no_such_node`. Silently returning `[]` is how a traversal
+quietly explores nothing and reports success.
 
-**`components` is for undirected graphs.** On a directed one it follows edges
-forwards only, so it reports what is reachable rather than true weak components.
+**`components` on a directed graph follows edges both ways**, giving weakly
+connected components: every node is in exactly one group.
+
+**A self-loop is a cycle.** `has_cycle` reports it and `topo_sort` refuses it.
+
+**Every edge is one hop.** There are no weights.
 
 **Lookups are linear.** `has_edge` scans a neighbour list and `in_degree` scans
 every node. That is the right trade for the sizes this package targets - tens or
@@ -123,8 +142,6 @@ hundreds of nodes, not millions.
 ecko test
 ```
 
-Offline and deterministic: no `ai`, no filesystem, no network.
-
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)
